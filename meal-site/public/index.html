@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Meal Calendar Printer</title>
+<style>
+  :root{--f:11}
+  *{box-sizing:border-box}
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;margin:0;color:#111;background:#f5f5f4}
+  .wrap{max-width:960px;margin:0 auto;padding:16px}
+  textarea{width:100%;height:90px;font:12px/1.4 ui-monospace,Menlo,monospace;padding:10px;border:1px solid #a8a29e;border-radius:6px}
+  .row{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:8px 0}
+  button{font:inherit;padding:8px 16px;border-radius:6px;border:1px solid #166534;background:#166534;color:#fff;cursor:pointer}
+  button.alt{background:#fff;color:#166534}
+  #msg{color:#b91c1c;font-size:.9rem}
+  #sheet{display:none;background:#fff;margin:12px auto;padding:.03in;width:11in;box-shadow:0 1px 4px #0003;overflow:hidden}
+  .title{font-size:13pt;font-weight:600;text-align:center;margin:0 0 2px;line-height:1.1}
+  .grid{display:grid;width:100%}
+  .cell{border:1px solid #000;padding:1px 3px;min-width:0}
+  .hd{font-size:8pt;font-weight:600;text-align:center;background:#ddd!important;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .day{float:right;margin:0 0 1px 5px;padding:1px 3px;border:1px solid #1e3a8a;background:#1e3a8a!important;font-size:calc(var(--f)*1pt);font-weight:700;color:#fff;line-height:1}
+  .item{display:flex;justify-content:space-between;gap:4px;font-size:calc(var(--f)*1pt);line-height:1.1;font-weight:400;margin:0 0 1px}
+  .nm{min-width:0}
+  .grp{font-size:calc(var(--f)*.7pt);font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin:2px 0 0;line-height:1.1;color:var(--c,#555);border-bottom:1px solid var(--c,#999)}
+  .grp{--c:#15803d}
+  .cn{color:#1d4ed8}.cs{color:#c2410c}
+  .n{font-size:calc(var(--f)*.95pt);font-weight:700;white-space:nowrap;flex:none}
+  .tot{clear:both;display:flex;justify-content:space-between;margin-top:2px;padding-top:1px;border-top:1px solid #000;font-size:calc(var(--f)*1pt);font-weight:700;line-height:1.1}
+  .empty{background:#fafafa}
+  @page{size:landscape;margin:0}
+  @media print{
+    html,body{background:#fff;margin:0}
+    .wrap>*:not(#sheet){display:none!important}
+    .wrap{padding:0;margin:0;max-width:none}
+    #sheet{margin:0;box-shadow:none;width:11in}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="admin" style="display:none">
+    <textarea id="src" placeholder="Paste the MealViewer calendar HTML here (outerHTML of #calendar-container)…" spellcheck="false"></textarea>
+    <div class="row">
+      <button id="build">Build preview</button>
+      <button id="publish" style="display:none">Publish for everyone</button>
+    </div>
+  </div>
+  <div class="row">
+    <button id="print" class="alt" style="display:none">Print</button>
+    <span id="msg"></span>
+  </div>
+  <div id="sheet"></div>
+</div>
+<script>
+(function(){
+  var MAX=12, MIN=4, FIT_PX=795; // FIT_PX: usable height of one 8.5in-tall landscape page at 96dpi
+  var $=function(i){return document.getElementById(i)};
+  var src=$('src'), sheet=$('sheet'), msg=$('msg'), printBtn=$('print');
+  var data=null;
+
+  // Estimated [net carbs g, sugars g] for a typical school serving. First matching rule wins.
+  // Net carbs = total carbs - fiber. These are estimates, not label values.
+  var RULES=[
+    [/100% fruit blend juice|fruit juice/,15,14],
+    [/frozen fruit cup/,22,20],
+    [/applesauce/,15,13],
+    [/bbq chicken drumstick/,12,9],
+    [/bbq pinto|barbecue.*bean/,17,7],
+    [/baked chicken bites/,11,1],
+    [/crinkle cut french fries|french fries/,17,0],
+    [/emoticon potatoes|potato.*smile|tater/,18,0],
+    [/popcorn chicken & rice|rice bowl/,58,18],
+    [/popcorn chicken/,16,1],
+    [/sweet potato fries/,19,4],
+    [/nachos/,22,2],
+    [/turkey hot dog|hot dog$/,27,5],
+    [/buttered corn|^corn$/,18,4],
+    [/corn dog/,27,6],
+    [/pizza sticks/,30,3],
+    [/cheeseburger/,30,6],
+    [/hamburger/,29,6],
+    [/dumplings/,36,3],
+    [/egg rolls?/,34,4],
+    [/chef salad/,8,3],
+    [/diced peaches|peach cup|fruit cocktail/,15,13],
+    [/flame roasted corn/,15,4],
+    [/baby carrots$/,5,4],
+    [/breadstick|bread stick/,24,2],
+    [/garlic butter dinner roll/,32,4],
+    [/dinner roll/,33,4],
+    [/caprese/,3,2],
+    [/cucumber/,2,1],
+    [/golden delicious/,21,19],
+    [/red delicious/,27,24],
+    [/apple/,21,18],
+    [/grapes/,15,14],
+    [/oranges?$/,14,12],
+    [/tossed salad|garden salad|side salad/,2,1],
+    [/garlic green beans/,4,2],
+    [/glazed carrots/,12,10],
+    [/sugar roasted baby carrots/,12,10],
+    [/grilled cheese/,27,4],
+    [/chicken wrap/,32,3],
+    [/queso/,8,3],
+    [/mac.* cheese|macaroni/,36,5],
+    [/mashed potatoes/,15,1],
+    [/chili$/,3,1],
+    [/marinara/,8,6],
+    [/quesadillas?/,49,3],
+    [/vegetable medley/,9,4],
+    [/nacho cheese/,8,3],
+    [/pepperoni pizza/,34,4],
+    [/cheese pizza|pizza/,33,4],
+    [/3 bean chili|bean chili/,26,7],
+    [/ranch style pinto/,14,2],
+    [/turkey tenderloin/,4,1],
+    [/salsa/,7,4],
+    [/green beans/,3,1],
+    [/black beans/,13,1],
+    [/spaghetti/,46,8],
+    [/steamed.*broccoli|broccoli/,3,1],
+    [/stir fry/,5,2],
+    [/yogurt box with crackers/,49,26],
+    [/yogurt box/,44,24],
+    [/strawberry cup|fruit cup/,17,14],
+    [/blueberry parfait/,57,33],
+    [/pineapple parfait/,66,40],
+    [/parfait/,63,38],
+    [/baked beans/,24,11],
+    [/lo mein/,51,7],
+    [/tortilla chips/,23,1],
+    [/buttered toast|toast/,10,1],
+    [/stuffing/,11,1],
+    [/garlic flatbread|flatbread/,25,2]
+  ];
+
+  function txt(n){return (n.textContent||'').replace(/\s+/g,' ').trim();}
+
+  function est(name,cal){
+    var k=name.toLowerCase().replace(/\s+/g,' ').trim();
+    for(var i=0;i<RULES.length;i++) if(RULES[i][0].test(k)) return {n:RULES[i][1],s:RULES[i][2],guess:false};
+    // Unknown food: rough estimate from calories (about 40% of calories from net carbs, 12% from sugar)
+    if(cal!=null) return {n:Math.round(cal*0.10),s:Math.round(cal*0.03),guess:true};
+    return null;
+  }
+
+  function parse(html){
+    // MealViewer nests <button> inside <button>, which HTML parsing breaks apart; treat them as spans.
+    html=html.replace(/<(\/?)button\b/gi,'<$1span');
+    var doc=new DOMParser().parseFromString(html,'text/html');
+    var days=doc.querySelector('.calendar-days');
+    if(!days) throw new Error('Could not find the calendar. Copy the outerHTML of the element with id="calendar-container".');
+    var heads=[].map.call(doc.querySelectorAll('.calendar-weekdays .calendar-grid-item'),txt);
+    var title=txt(doc.querySelector('.heading')||document.createElement('i'));
+    var cells=[].map.call(days.querySelectorAll(':scope > .calendar-grid-item'),function(c){
+      var d=c.querySelector('.day');
+      var items=[];
+      [].forEach.call(c.querySelectorAll('.foodItemGroup'),function(g){
+        var t=g.querySelector('.foodItemType'), type=t?txt(t):'';
+        [].forEach.call(g.querySelectorAll('.item-info'),function(it,j){
+          var n=it.querySelector('.item-name'), k=it.querySelector('.nutritionals');
+          var m=k?txt(k).match(/[\d.]+/):null;
+          items.push({type:j===0?type:'',name:n?txt(n):txt(it),cal:m?parseFloat(m[0]):null});
+        });
+      });
+      return {day:d?txt(d):'',items:items};
+    });
+    if(!cells.length) throw new Error('Found the calendar but no days in it.');
+    return {title:title,heads:heads,cells:cells};
+  }
+
+  function catClass(t){t=t.toLowerCase();
+    if(/entr|breakfast|protein|main/.test(t))return 'c-entree';
+    if(/grain|bread|starch/.test(t))return 'c-grain';
+    if(/veg/.test(t))return 'c-veg';
+    if(/fruit|juice/.test(t))return 'c-fruit';
+    if(/milk|dairy|yogurt/.test(t))return 'c-dairy';
+    return 'c-cond';}
+  function add(parent,cls,text){var e=document.createElement('div');e.className=cls;if(text!=null)e.textContent=text;parent.appendChild(e);return e;}
+  function span(parent,cls,text){var e=document.createElement('span');e.className=cls;e.textContent=text;parent.appendChild(e);return e;}
+
+  var anyGuess=false;
+  function render(){
+    var d=data, cols=d.heads.length||5; anyGuess=false;
+    sheet.innerHTML='';
+    var g=document.createElement('div');g.className='grid';g.style.gridTemplateColumns='repeat('+cols+',1fr)';
+    d.heads.forEach(function(h){add(g,'cell hd',h)});
+    d.cells.forEach(function(c){
+      var e=add(g,'cell'+(c.items.length||c.day?'':' empty'));
+      if(c.day) span(e,'day',c.day);
+      c.items.forEach(function(it){
+        if(it.type) add(e,'grp '+catClass(it.type),it.type);
+        var v=est(it.name,it.cal), i=add(e,'item'); span(i,'nm',it.name);
+        if(v){if(v.guess)anyGuess=true;var q=span(i,'n','');span(q,'cn',(v.guess?'~':'')+v.n);q.appendChild(document.createTextNode(' / '));span(q,'cs',(v.guess?'~':'')+v.s);}
+        else span(i,'n','– / –');
+      });
+    });
+    if(d.title){var tt=add(sheet,'title',d.title+'  ·  estimated grams per serving: ');span(tt,'cn','net carbs');tt.appendChild(document.createTextNode(' / '));span(tt,'cs','sugars');if(anyGuess)tt.appendChild(document.createTextNode('  (~ = rough guess)'));}
+    sheet.appendChild(g);
+    sheet.style.display='block';
+    fit();
+  }
+
+  function fit(){
+    var f=MAX, r=document.documentElement;
+    function h(){r.style.setProperty('--f',f);var t=0;[].forEach.call(sheet.children,function(c){t+=c.getBoundingClientRect().height});return t+6;}
+    var pw=sheet.style.width;
+    sheet.style.width='11in';
+    while(h()>FIT_PX&&f>MIN){f-=.25}
+    var over=h()>FIT_PX;
+    sheet.style.width=pw;
+    msg.style.color=over?'#b91c1c':'#555';
+    msg.textContent=over?'Menu is very long; may spill to a second page.':'';
+  }
+
+  var admin=/[#?&]admin\b/.test(location.hash+location.search);
+  if(admin) $('admin').style.display='block';
+  var pubBtn=$('publish');
+
+  function show(d,note){
+    data=d;render();printBtn.style.display='';
+    var u=d.updated?new Date(d.updated).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}):'';
+    msg.style.color='#555';msg.textContent=note||(u?'Menu updated '+u:'');
+  }
+  function status(t,bad){msg.style.color=bad?'#b91c1c':'#555';msg.textContent=t;}
+
+  // Load the published menu: server first, then a static menu.json fallback.
+  function jget(url){return fetch(url,{cache:'no-store'}).then(function(r){if(!r.ok)throw 0;return r.json();});}
+  jget('/api/menu').then(function(d){if(!d)throw 0;return d;})
+    .catch(function(){return jget('menu.json');})
+    .then(function(d){if(d&&d.cells)show(d);else throw 0;})
+    .catch(function(){status(admin?'No menu published yet. Paste the calendar HTML above.':'No menu has been published yet.');});
+
+  $('build').onclick=function(){
+    status('');
+    try{var d=parse(src.value);show(d,'Preview (not published yet)');pubBtn.style.display='';}
+    catch(e){status(e.message,true);sheet.style.display='none';printBtn.style.display='none';pubBtn.style.display='none';}
+  };
+
+  function download(d){
+    var a=document.createElement('a');
+    a.href=URL.createObjectURL(new Blob([JSON.stringify(d)],{type:'application/json'}));
+    a.download='menu.json';a.click();
+  }
+  pubBtn.onclick=function(){
+    var d=JSON.parse(JSON.stringify(data));d.updated=new Date().toISOString();
+    status('Publishing…');
+    fetch('/api/menu',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(d)})
+      .then(function(r){
+        if(!r.ok) throw 0;
+        show(d);status('Published. Everyone now sees this menu.');pubBtn.style.display='none';
+      })
+      .catch(function(){download(d);status('Server publishing is not available, so menu.json was downloaded. Put it next to index.html and re-deploy.',true);});
+  };
+  printBtn.onclick=function(){fit();window.print();};
+  window.addEventListener('beforeprint',function(){if(data)fit();});
+})();
+</script>
+</body>
+</html>
